@@ -176,6 +176,9 @@ export default function Products() {
   };
 
   const compressImage = (base64Str: string): Promise<string> => {
+    if (base64Str.startsWith('data:application/pdf') || base64Str.includes('pdf')) {
+      return Promise.resolve(base64Str);
+    }
     return new Promise((resolve) => {
       const img = new Image();
       img.src = base64Str;
@@ -214,31 +217,34 @@ export default function Products() {
 
   const handleParseMenuCard = async () => {
     if (!menuCardImage) {
-      toast.error('Please select or capture a Menu Card image first');
+      toast.error('Please select or capture a Menu Card photo or PDF first');
       return;
     }
 
     setParsingMenuCard(true);
     try {
-      // 1. Compress image to max 1600px resolution before sending
+      const isPdfFile = menuCardImage.startsWith('data:application/pdf') || menuCardImage.includes('pdf');
+      const mimeType = isPdfFile ? 'application/pdf' : 'image/jpeg';
       const optimizedImage = await compressImage(menuCardImage);
 
-      // 2. Send request to backend OCR endpoint
+      // Send request to backend OCR / Ollama endpoint
       let result: any = null;
       try {
         result = await menuApi.parseMenuCard({
           imageBase64: optimizedImage,
+          fileBase64: optimizedImage,
+          mimeType,
           restaurantId: restaurantId || restaurant?.id,
         });
       } catch (apiErr) {
-        console.warn('Backend OCR call error, proceeding with client parsing:', apiErr);
+        console.warn('Backend OCR call error:', apiErr);
       }
 
       let scannedItems: any[] = [];
       const categories = result?.categories || (Array.isArray(result) ? result : (result as any)?.data);
       if (Array.isArray(categories)) {
         categories.forEach((cat: any) => {
-          const catName = cat.categoryName || cat.name || 'Menu Card Specials';
+          const catName = cat.categoryName || cat.name || 'Menu Specials';
           const catItems = cat.items || cat.menuItems || [];
           if (Array.isArray(catItems)) {
             catItems.forEach((it: any) => {
@@ -246,7 +252,7 @@ export default function Products() {
                 scannedItems.push({
                   id: it.id || `item-scanned-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
                   name: it.name,
-                  description: it.description || `Scanned from uploaded Menu Card photo`,
+                  description: it.description || `Scanned from uploaded Menu Card`,
                   price: typeof it.price === 'number' ? it.price : parseFloat(it.price || 100),
                   isVeg: it.isVeg ?? !/chicken|mutton|fish|prawn|egg|biryani|fry|sukka|chettinad|salna|keema/i.test(it.name),
                   isAvailable: true,
@@ -259,70 +265,10 @@ export default function Products() {
         });
       }
 
-      // If OCR parsed empty list, format extracted items from Anandham Hotel Menu Card photo
       if (scannedItems.length === 0) {
-        scannedItems = [
-          {
-            id: `item-scanned-${Date.now()}-1`,
-            name: 'Hotel Anandham Special Mutton Biryani',
-            description: 'Traditional Seeraga Samba mutton biryani served with onion raita & brinjal gravy',
-            price: 280,
-            isVeg: false,
-            isAvailable: true,
-            categoryName: 'Biryani Specials',
-            imageUrl: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=500',
-          },
-          {
-            id: `item-scanned-${Date.now()}-2`,
-            name: 'Chettinad Chicken Curry',
-            description: 'Authentic Tamil Nadu style chicken curry with roasted spices & shallots',
-            price: 180,
-            isVeg: false,
-            isAvailable: true,
-            categoryName: 'Main Course',
-            imageUrl: 'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=500',
-          },
-          {
-            id: `item-scanned-${Date.now()}-3`,
-            name: 'Hot Parotta with Salna (2 Pcs)',
-            description: 'Flaky layered flaky bread served with rich spicy chicken salna',
-            price: 50,
-            isVeg: true,
-            isAvailable: true,
-            categoryName: 'Tiffin & Breads',
-            imageUrl: 'https://images.unsplash.com/photo-1589301760014-d929f397299c?w=500',
-          },
-          {
-            id: `item-scanned-${Date.now()}-4`,
-            name: 'Mutton Chukka Fry',
-            description: 'Tender mutton chunks pan-fried with shallots & crushed black pepper',
-            price: 260,
-            isVeg: false,
-            isAvailable: true,
-            categoryName: 'Starters',
-            imageUrl: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=500',
-          },
-          {
-            id: `item-scanned-${Date.now()}-5`,
-            name: 'Ghee Roast Dosa',
-            description: 'Crispy golden dosa roasted in pure desi ghee served with chutneys',
-            price: 90,
-            isVeg: true,
-            isAvailable: true,
-            categoryName: 'Tiffin & Breads',
-            imageUrl: 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=500',
-          },
-          {
-            id: `item-scanned-${Date.now()}-6`,
-            name: 'Kumbakonam Degree Coffee',
-            description: 'Traditional strong aromatic filter coffee',
-            price: 30,
-            isVeg: true,
-            isAvailable: true,
-            categoryName: 'Beverages',
-            imageUrl: 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=500',
-          },
-        ];
+        toast.error('Could not detect menu items in the uploaded document. Please check text clarity and try again.');
+        setParsingMenuCard(false);
+        return;
       }
 
       // Persist items to DB
@@ -672,11 +618,11 @@ export default function Products() {
               ) : (
                 <div className="space-y-2">
                   <Camera className="w-10 h-10 mx-auto text-[#ff6b35] opacity-80" />
-                  <p className="text-sm font-semibold text-white">Click or drag your Menu Card photo here</p>
-                  <p className="text-xs text-slate-500">Supports JPG, PNG, WEBP menu photos</p>
+                  <p className="text-sm font-semibold text-white">Click or drag your Menu Card photo or PDF here</p>
+                  <p className="text-xs text-slate-500">Supports JPG, PNG, WEBP & PDF menu documents</p>
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/*,.pdf,application/pdf"
                     id="menu-card-file"
                     onChange={handleMenuCardFileSelect}
                     className="hidden"
@@ -685,7 +631,7 @@ export default function Products() {
                     htmlFor="menu-card-file"
                     className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-[#ff6b35] text-white hover:bg-[#e05a2b] transition-all mt-2"
                   >
-                    <Upload size={14} /> Choose Menu Card Photo
+                    <Upload size={14} /> Choose Menu Photo or PDF
                   </Label>
                 </div>
               )}

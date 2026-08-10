@@ -250,7 +250,7 @@ export const menuApi = {
   create: (data: unknown) => apiPost<any>('/menus', data),
   update: (id: string, data: unknown) => apiPatch<any>(`/menus/${id}`, data),
   delete: (id: string) => apiDelete<any>(`/menus/${id}`),
-  parseMenuCard: (data: { imageBase64?: string; text?: string; mimeType?: string; restaurantId?: string }) =>
+  parseMenuCard: (data: { imageBase64?: string; fileBase64?: string; text?: string; mimeType?: string; restaurantId?: string }) =>
     apiPost<any>('/ai/parse-menu-card', data),
 };
 

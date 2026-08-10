@@ -347,16 +347,26 @@ restRouter.patch("/restaurants/:id", (req, res) => {
 });
 
 // Helper to transform NestJS backend orders to Vendor Portal format
+// Helper to transform NestJS backend orders to Vendor Portal format
 function formatBackendOrder(bo: any) {
   return {
     id: bo.id,
+    orderId: `#DG${(bo.id || '').substring(0, 8).toUpperCase()}`,
     restaurantId: bo.restaurantId || "rest-1",
     storeId: bo.storeId || "store-1",
-    customerName: bo.customer?.name || bo.customer?.user?.phoneNumber || bo.customerPhone || 'WhatsApp Customer',
-    customerPhone: bo.customer?.user?.phoneNumber || bo.customerPhone || '+91 9150416366',
+    customerName:
+      bo.customerName ||
+      bo.customer?.name ||
+      bo.customer?.user?.phoneNumber ||
+      bo.customerPhone ||
+      'WhatsApp Customer',
+    customerPhone:
+      bo.customerPhone ||
+      bo.customer?.user?.phoneNumber ||
+      '+91 9150416366',
     deliveryAddress: bo.deliveryAddress?.addressLine1
       ? `${bo.deliveryAddress.addressLine1}${bo.deliveryAddress.city ? ', ' + bo.deliveryAddress.city : ''}`
-      : (typeof bo.deliveryAddress === 'string' ? bo.deliveryAddress : 'WhatsApp / App Delivery Location'),
+      : (typeof bo.deliveryAddress === 'string' ? bo.deliveryAddress : 'WhatsApp Delivery Location'),
     items: (bo.orderItems && bo.orderItems.length > 0)
       ? bo.orderItems.map((i: any) => ({
           id: i.id || i.menuItemId || i.storeProductId || `item-${Date.now()}`,
@@ -374,7 +384,7 @@ function formatBackendOrder(bo: any) {
 
 // ---- Orders Endpoints ----
 restRouter.get("/orders", async (req, res) => {
-  const { status } = req.query;
+  const { status, restaurantId, storeId } = req.query;
   let allOrders = [...ordersData];
 
   // Sync real live orders from NestJS Backend (backend_dago)
@@ -397,6 +407,11 @@ restRouter.get("/orders", async (req, res) => {
     }
   } catch (e) {
     // Non-fatal fallback to in-memory ordersData
+  }
+
+  // Filter by restaurantId if provided
+  if (restaurantId && typeof restaurantId === "string" && restaurantId !== "all" && restaurantId !== "ALL") {
+    allOrders = allOrders.filter(o => !o.restaurantId || o.restaurantId === restaurantId || o.restaurantId === "rest-1" || o.restaurantId === "rest-bala-1");
   }
 
   if (status && typeof status === "string" && status !== "ALL" && status !== "all") {
@@ -461,6 +476,18 @@ restRouter.patch("/orders/:id", async (req, res) => {
   res.json({ id: orderId, ...req.body });
 });
 
+// Helper to sync live menu data to NestJS backend_dago
+const syncMenuToBackend = async () => {
+  try {
+    const axios = (await import("axios")).default;
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:3000";
+    const allCategories = menusData.flatMap(m => m.categories || []);
+    await axios.post(`${backendUrl}/api/v1/restaurants/rest-bala-1/sync-menu`, {
+      categories: allCategories,
+    }, { timeout: 3000 }).catch(() => null);
+  } catch (e) {}
+};
+
 // ---- Menus Endpoints ----
 restRouter.get("/menus", (req, res) => {
   res.json(menusData);
@@ -469,6 +496,7 @@ restRouter.get("/menus", (req, res) => {
 restRouter.post("/menus", (req, res) => {
   const newMenu = { id: `menu-${Date.now()}`, categories: [], ...req.body };
   menusData.push(newMenu);
+  syncMenuToBackend();
   res.json(newMenu);
 });
 
@@ -476,6 +504,7 @@ restRouter.patch("/menus/:id", (req, res) => {
   const menu = menusData.find(m => m.id === req.params.id);
   if (menu) {
     Object.assign(menu, req.body);
+    syncMenuToBackend();
     return res.json(menu);
   }
   res.status(404).json({ message: "Menu not found" });
@@ -483,6 +512,7 @@ restRouter.patch("/menus/:id", (req, res) => {
 
 restRouter.delete("/menus/:id", (req, res) => {
   menusData = menusData.filter(m => m.id !== req.params.id);
+  syncMenuToBackend();
   res.json({ success: true });
 });
 
@@ -491,6 +521,7 @@ restRouter.post("/menus/:menuId/categories", (req, res) => {
   if (menu) {
     const newCat = { id: `cat-${Date.now()}`, items: [], ...req.body };
     menu.categories.push(newCat);
+    syncMenuToBackend();
     return res.json(newCat);
   }
   res.status(404).json({ message: "Menu not found" });
@@ -501,6 +532,7 @@ restRouter.patch("/menu-categories/:id", (req, res) => {
     const cat = m.categories.find(c => c.id === req.params.id);
     if (cat) {
       Object.assign(cat, req.body);
+      syncMenuToBackend();
       return res.json(cat);
     }
   }
@@ -511,6 +543,7 @@ restRouter.delete("/menu-categories/:id", (req, res) => {
   for (const m of menusData) {
     m.categories = m.categories.filter(c => c.id !== req.params.id);
   }
+  syncMenuToBackend();
   res.json({ success: true });
 });
 
@@ -528,6 +561,7 @@ restRouter.post("/menu-categories/:categoryId/items", (req, res) => {
   if (!added && menusData[0]?.categories[0]) {
     menusData[0].categories[0].items.push(newItem);
   }
+  syncMenuToBackend();
   res.json(newItem);
 });
 
@@ -537,6 +571,7 @@ restRouter.patch("/menu-items/:id", (req, res) => {
       const item = c.items.find(i => i.id === req.params.id);
       if (item) {
         Object.assign(item, req.body);
+        syncMenuToBackend();
         return res.json(item);
       }
     }
@@ -550,6 +585,7 @@ restRouter.delete("/menu-items/:id", (req, res) => {
       c.items = c.items.filter(i => i.id !== req.params.id);
     }
   }
+  syncMenuToBackend();
   res.json({ success: true });
 });
 
@@ -892,14 +928,113 @@ restRouter.post("/auth/login", async (req, res) => {
   });
 });
 
-// ---- AI Menu Card OCR Parser Endpoint (Gemini 2.5 Flash Vision - Ultra Fast) ----
+// ---- AI Menu Card OCR Parser Endpoint (Ollama Local AI + PDF Parse + Gemini Vision) ----
 restRouter.post("/ai/parse-menu-card", async (req, res) => {
-  const { imageBase64, text, mimeType } = req.body;
+  const { imageBase64, fileBase64, text, mimeType } = req.body;
+  const rawInput = fileBase64 || imageBase64 || "";
+
+  console.log(`[Vendor Router] Processing Menu Card OCR request (base64 len: ${rawInput?.length || 0}, mime: ${mimeType})`);
+
+  let extractedText = text || "";
+  let isPdf = false;
+
+  // 1. Detect and Extract PDF Text if PDF file uploaded
+  if (
+    mimeType === "application/pdf" ||
+    rawInput.startsWith("data:application/pdf") ||
+    rawInput.includes("JVBERi0") // PDF magic header (%PDF-)
+  ) {
+    isPdf = true;
+    try {
+      const pdfModule: any = await import("pdf-parse");
+      const pdfParse = pdfModule.default || pdfModule;
+      const cleanBase64 = rawInput.includes("base64,") ? rawInput.split("base64,")[1] : rawInput;
+      const pdfBuffer = Buffer.from(cleanBase64, "base64");
+      console.log(`[Vendor Router] Extracting text from PDF document (${pdfBuffer.length} bytes)...`);
+      const pdfData = await pdfParse(pdfBuffer);
+      extractedText = pdfData?.text || "";
+      console.log(`[Vendor Router] PDF extracted text length: ${extractedText.length} chars`);
+    } catch (pdfErr: any) {
+      console.error("[Vendor Router] PDF extraction failed:", pdfErr.message);
+    }
+  }
+
+  // 2. Try Ollama Local AI Parsing if text is available
+  const ollamaHost = process.env.OLLAMA_HOST || "http://localhost:11434";
+  if (extractedText && extractedText.trim().length > 5) {
+    try {
+      const axios = (await import("axios")).default;
+      const tagsRes = await axios.get(`${ollamaHost}/api/tags`, { timeout: 3000 }).catch(() => null);
+      const models: any[] = tagsRes?.data?.models || [];
+
+      if (models.length > 0) {
+        const selectedModel =
+          models.find((m) => m.name.includes("llama3.2"))?.name ||
+          models.find((m) => m.name.includes("qwen"))?.name ||
+          models.find((m) => m.name.includes("llava"))?.name ||
+          models[0].name;
+
+        console.log(`[Vendor Router] Invoking Ollama local AI model (${selectedModel}) for menu parsing...`);
+
+        const systemPrompt = `You are a high-speed AI OCR Engine for DaGo Hyperlocal Delivery.
+Extract 100% of all menu categories, food item names, prices in Indian Rupees (₹), descriptions, and Veg/Non-Veg status from the provided text.
+Do NOT omit any item or price. Classify items like Paneer, Veg, Dosa, Idli, Rice, Tea, Coffee as Veg (isVeg: true), and Chicken, Mutton, Fish, Egg, Biryani as Non-Veg (isVeg: false).
+
+Return a RAW JSON array ONLY matching this exact structure:
+[
+  {
+    "categoryName": "Category Name from Menu",
+    "items": [
+      {
+        "name": "Exact Dish Name",
+        "description": "Item description if present",
+        "price": 150,
+        "isVeg": true
+      }
+    ]
+  }
+]`;
+
+        const ollamaRes = await axios.post(
+          `${ollamaHost}/api/chat`,
+          {
+            model: selectedModel,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: `MENU TEXT:\n${extractedText}` },
+            ],
+            stream: false,
+            format: "json",
+          },
+          { timeout: 45000 }
+        );
+
+        const replyContent = ollamaRes.data?.message?.content;
+        if (replyContent) {
+          const parsed = JSON.parse(replyContent.trim());
+          const categories = Array.isArray(parsed) ? parsed : (parsed.categories || [parsed]);
+          if (categories.length > 0 && categories[0].items?.length > 0) {
+            console.log(`[Vendor Router] Ollama AI extracted ${categories.length} categories successfully!`);
+            if (menusData[0]) {
+              menusData[0].categories = categories;
+            }
+            syncMenuToBackend();
+            return res.json({
+              success: true,
+              categories,
+              source: "ollama",
+            });
+          }
+        }
+      }
+    } catch (ollamaErr: any) {
+      console.error("[Vendor Router] Ollama parsing failed:", ollamaErr.message);
+    }
+  }
+
+  // 3. Try Gemini API if key exists and base64 provided
   const apiKey = process.env.GEMINI_API_KEY;
-
-  console.log(`[Vendor Router] Processing AI Menu Card OCR request (base64 length: ${imageBase64?.length || 0})`);
-
-  if (apiKey) {
+  if (apiKey && rawInput.length > 50) {
     try {
       const axios = (await import("axios")).default;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -907,8 +1042,6 @@ restRouter.post("/ai/parse-menu-card", async (req, res) => {
       const systemInstruction = `You are a high-speed AI OCR Engine for DaGo Hyperlocal Delivery.
 Extract ALL menu categories, food item names, prices in Indian Rupees (₹), descriptions, and Veg/Non-Veg badges from the uploaded menu card photo or document.
 Do NOT skip any item printed on the menu card.
-Classify items containing Paneer, Veg, Gobi, Mushroom, Meals, Dosa, Idli, Rice, Tea, Coffee as Veg (isVeg: true), and Chicken, Mutton, Fish, Egg, Biryani as Non-Veg (isVeg: false unless specified).
-
 Return a RAW JSON array of categories ONLY matching this exact schema:
 [
   {
@@ -922,19 +1055,18 @@ Return a RAW JSON array of categories ONLY matching this exact schema:
       }
     ]
   }
-]
-Do not return markdown formatting (no \`\`\`json). Just return valid raw JSON array string.`;
+]`;
 
       let parts: any[] = [];
-      if (imageBase64 && imageBase64.length > 50) {
-        const rawBase64 = imageBase64.includes("base64,") ? imageBase64.split("base64,")[1] : imageBase64;
-        const detectedMime = imageBase64.includes("data:") ? imageBase64.split(";")[0].replace("data:", "") : (mimeType || "image/jpeg");
+      if (!isPdf && rawInput.length > 50) {
+        const rawBase64 = rawInput.includes("base64,") ? rawInput.split("base64,")[1] : rawInput;
+        const detectedMime = rawInput.includes("data:") ? rawInput.split(";")[0].replace("data:", "") : (mimeType || "image/jpeg");
         parts = [
           { inlineData: { mimeType: detectedMime, data: rawBase64 } },
           { text: "Extract 100% of all menu categories, items, prices, descriptions, and Veg/Non-Veg status from this menu card photo." },
         ];
-      } else if (text) {
-        parts = [{ text: `Extract all menu items and prices from this text:\n${text}` }];
+      } else if (extractedText) {
+        parts = [{ text: `Extract all menu items and prices from this text:\n${extractedText}` }];
       }
 
       if (parts.length > 0) {
@@ -956,10 +1088,11 @@ Do not return markdown formatting (no \`\`\`json). Just return valid raw JSON ar
         if (replyText) {
           const parsed = JSON.parse(replyText.trim());
           const categories = Array.isArray(parsed) ? parsed : [parsed];
-          console.log(`[Vendor Router] Gemini OCR extracted ${categories.length} categories ultra-fast!`);
+          console.log(`[Vendor Router] Gemini OCR extracted ${categories.length} categories!`);
           return res.json({
             success: true,
             categories,
+            source: "gemini",
           });
         }
       }
@@ -968,188 +1101,130 @@ Do not return markdown formatting (no \`\`\`json). Just return valid raw JSON ar
     }
   }
 
-  // Optical Character Recognition (OCR) Engine using Tesseract.js
-  try {
-    const Tesseract = (await import("tesseract.js")).default;
-    const rawBase64 = imageBase64?.includes("base64,") ? imageBase64.split("base64,")[1] : (imageBase64 || "");
-    if (rawBase64.length > 100) {
+  // 4. Run Tesseract.js OCR if not a PDF and image base64 is available and no text extracted yet
+  if (!isPdf && !extractedText && rawInput.length > 100) {
+    try {
+      const Tesseract = (await import("tesseract.js")).default;
+      const rawBase64 = rawInput.includes("base64,") ? rawInput.split("base64,")[1] : rawInput;
       const buffer = Buffer.from(rawBase64, "base64");
       console.log(`[Vendor Router] Running Tesseract OCR on image buffer (${buffer.length} bytes)...`);
       const workerRes = await Tesseract.recognize(buffer, "eng");
-      const extractedText = workerRes?.data?.text || "";
-
+      extractedText = workerRes?.data?.text || "";
       console.log("[Vendor Router] Tesseract OCR raw extracted text:\n", extractedText);
+    } catch (ocrErr: any) {
+      console.error("[Vendor Router] Tesseract OCR processing failed:", ocrErr.message);
+    }
+  }
 
-      if (extractedText && extractedText.trim().length > 5) {
-        const lines = extractedText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-        const itemsList: Array<{ name: string; price: number; isVeg: boolean; categoryName: string }> = [];
-        let currentCategory = "Menu Card Specials";
+  // 5. Smart Deterministic Text Parser (Line-by-line regex extraction for exact items & prices)
+  if (extractedText && extractedText.trim().length > 5) {
+    const lines = extractedText.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+    const categoriesMap: Record<string, Array<{ name: string; price: number; isVeg: boolean; categoryName: string }>> = {};
+    let currentCategory = "Menu Card Specials";
 
-        const nonVegKeywords = /chicken|mutton|fish|prawn|egg|biryani|kabab|tikka|fry|sukka|chettinad|meat|seafood|salna|keema|porutu|roast|crab|squid/i;
-        const noiseFilter = /^(total|subtotal|gst|tax|mobile|phone|date|table|order|discount|cash|card|bill|balance|thank|welcome|menu|rate|price|sl\.?no|items?)$/i;
+    const nonVegKeywords = /chicken|mutton|fish|prawn|egg|biryani|kabab|tikka|fry|sukka|chettinad|meat|seafood|salna|keema|porutu|roast|crab|squid/i;
+    const noiseFilter = /^(total|subtotal|gst|tax|mobile|phone|date|table|order|discount|cash|card|bill|balance|thank|welcome|menu|rate|price|sl\.?no|items?|location|rating)$/i;
 
-        // Pass 1: Line-by-Line Regex Parsing
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].replace(/[|\\~`]/g, "").trim();
-          if (line.length < 2) continue;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].replace(/[|\\~`]/g, "").trim();
+      if (line.length < 2) continue;
 
-          // Category Header detection
-          if (/^[A-Z\s/&\-]{3,40}$/.test(line) && !/\d/.test(line) && !noiseFilter.test(line)) {
-            currentCategory = line.replace(/[\-=\*]/g, "").trim();
-            continue;
-          }
+      // Category Header detection
+      if (/^[A-Z\s/&\-]{3,40}$/.test(line) && !/\d/.test(line) && !noiseFilter.test(line)) {
+        currentCategory = line.replace(/[\-=\*]/g, "").trim();
+        if (!categoriesMap[currentCategory]) categoriesMap[currentCategory] = [];
+        continue;
+      }
 
-          // Strip leading item numbers like "1. ", "02) ", "10 - "
-          let cleanLine = line.replace(/^\d{1,3}[\.\)\-:\s]+\s*/, "").trim();
-          cleanLine = cleanLine.replace(/\.{2,}/g, " ").replace(/\s{2,}/g, " ").trim();
+      // Strip leading item numbers like "1. ", "02) ", "10 - "
+      let cleanLine = line.replace(/^\d{1,3}[\.\)\-:\s]+\s*/, "").trim();
+      cleanLine = cleanLine.replace(/\.{2,}/g, " ").replace(/\s{2,}/g, " ").trim();
 
-          // Match Pattern 1: "Dish Name 150" / "Dish Name Rs.150/-" / "Dish Name ₹ 150.00"
-          const matchEndPrice = cleanLine.match(/^(.*?)\s*[:\-\=]?\s*(?:Rs\.?|INR|₹)?\s*(\d{1,4}(?:\.\d{1,2})?)\s*(?:\/\-)?$/i);
-          // Match Pattern 2: "150 Dish Name"
-          const matchStartPrice = cleanLine.match(/^(?:Rs\.?|INR|₹)?\s*(\d{1,4}(?:\.\d{1,2})?)\s*(?:\/\-)?\s*[:\-\=]?\s*(.*)$/i);
+      // Match Pattern 1: "Dish Name 150" / "Dish Name Rs.150/-" / "Dish Name ₹ 150.00"
+      const matchEndPrice = cleanLine.match(/^(.*?)\s*[:\-\=]?\s*(?:Rs\.?|INR|₹)?\s*(\d{1,4}(?:\.\d{1,2})?)\s*(?:\/\-)?$/i);
+      // Match Pattern 2: "150 Dish Name"
+      const matchStartPrice = cleanLine.match(/^(?:Rs\.?|INR|₹)?\s*(\d{1,4}(?:\.\d{1,2})?)\s*(?:\/\-)?\s*[:\-\=]?\s*(.*)$/i);
 
-          if (matchEndPrice && matchEndPrice[1].trim().length >= 2) {
-            const name = matchEndPrice[1].replace(/[\.\-_=]+$/, "").trim();
-            const price = parseFloat(matchEndPrice[2]);
-            if (name.length >= 2 && !noiseFilter.test(name) && price > 0 && price < 10000) {
-              itemsList.push({
-                name: name.charAt(0).toUpperCase() + name.slice(1),
-                price,
-                isVeg: !nonVegKeywords.test(name),
-                categoryName: currentCategory,
-              });
-              continue;
-            }
-          } else if (matchStartPrice && matchStartPrice[2].trim().length >= 2) {
-            const name = matchStartPrice[2].replace(/^[\.\-_=]+/, "").trim();
-            const price = parseFloat(matchStartPrice[1]);
-            if (name.length >= 2 && !noiseFilter.test(name) && price > 0 && price < 10000) {
-              itemsList.push({
-                name: name.charAt(0).toUpperCase() + name.slice(1),
-                price,
-                isVeg: !nonVegKeywords.test(name),
-                categoryName: currentCategory,
-              });
-              continue;
-            }
-          }
-
-          // Pass 2: Multi-line / Adjacent Line Pairing (Line i = Name, Line i+1 = Price)
-          if (i < lines.length - 1) {
-            const nextLine = lines[i + 1].trim();
-            const priceOnlyMatch = nextLine.match(/^(?:Rs\.?|INR|₹)?\s*(\d{1,4}(?:\.\d{1,2})?)\s*(?:\/\-)?$/i);
-            if (priceOnlyMatch && !/\d/.test(cleanLine) && cleanLine.length >= 3 && !noiseFilter.test(cleanLine)) {
-              const price = parseFloat(priceOnlyMatch[1]);
-              if (price > 0 && price < 10000) {
-                itemsList.push({
-                  name: cleanLine.charAt(0).toUpperCase() + cleanLine.slice(1),
-                  price,
-                  isVeg: !nonVegKeywords.test(cleanLine),
-                  categoryName: currentCategory,
-                });
-                i++; // Skip next line since it was consumed as price
-              }
-            }
-          }
-        }
-
-        if (itemsList.length > 0) {
-          const newCategory = {
-            id: `cat-${Date.now()}`,
-            name: "Menu Card Scanned Specials",
-            items: itemsList.map((it, idx) => ({
-              id: `item-ocr-${Date.now()}-${idx}`,
-              name: it.name,
-              description: `Freshly scanned item from uploaded Menu Card (${it.categoryName})`,
-              price: it.price,
-              isVeg: it.isVeg,
-              isAvailable: true,
-              imageUrl: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500",
-            })),
-          };
-          if (menusData[0]) {
-            menusData[0].categories.unshift(newCategory);
-          }
-          console.log(`[Vendor Router] Multi-pass OCR engine extracted ${itemsList.length} items with accurate prices!`);
-          return res.json({
-            success: true,
-            categories: [newCategory],
+      if (matchEndPrice && matchEndPrice[1].trim().length >= 2) {
+        const name = matchEndPrice[1].replace(/[\.\-_=]+$/, "").trim();
+        const price = parseFloat(matchEndPrice[2]);
+        if (name.length >= 2 && !noiseFilter.test(name) && price > 0 && price < 10000) {
+          if (!categoriesMap[currentCategory]) categoriesMap[currentCategory] = [];
+          categoriesMap[currentCategory].push({
+            name: name.charAt(0).toUpperCase() + name.slice(1),
+            price,
+            isVeg: !nonVegKeywords.test(name),
+            categoryName: currentCategory,
           });
+          continue;
+        }
+      } else if (matchStartPrice && matchStartPrice[2].trim().length >= 2) {
+        const name = matchStartPrice[2].replace(/^[\.\-_=]+/, "").trim();
+        const price = parseFloat(matchStartPrice[1]);
+        if (name.length >= 2 && !noiseFilter.test(name) && price > 0 && price < 10000) {
+          if (!categoriesMap[currentCategory]) categoriesMap[currentCategory] = [];
+          categoriesMap[currentCategory].push({
+            name: name.charAt(0).toUpperCase() + name.slice(1),
+            price,
+            isVeg: !nonVegKeywords.test(name),
+            categoryName: currentCategory,
+          });
+          continue;
+        }
+      }
+
+      // Pass 2: Multi-line / Adjacent Line Pairing (Line i = Name, Line i+1 = Price)
+      if (i < lines.length - 1) {
+        const nextLine = lines[i + 1].trim();
+        const priceOnlyMatch = nextLine.match(/^(?:Rs\.?|INR|₹)?\s*(\d{1,4}(?:\.\d{1,2})?)\s*(?:\/\-)?$/i);
+        if (priceOnlyMatch && !/\d/.test(cleanLine) && cleanLine.length >= 3 && !noiseFilter.test(cleanLine)) {
+          const price = parseFloat(priceOnlyMatch[1]);
+          if (price > 0 && price < 10000) {
+            if (!categoriesMap[currentCategory]) categoriesMap[currentCategory] = [];
+            categoriesMap[currentCategory].push({
+              name: cleanLine.charAt(0).toUpperCase() + cleanLine.slice(1),
+              price,
+              isVeg: !nonVegKeywords.test(cleanLine),
+              categoryName: currentCategory,
+            });
+            i++; // Skip next line
+          }
         }
       }
     }
-  } catch (ocrErr: any) {
-    console.log("[Vendor Router] OCR processing failed:", ocrErr.message);
-  }
 
-    // Default Smart OCR fallback items extracted from Menu Card photo
-    const fallbackCategory = {
-      id: `cat-scanned-${Date.now()}`,
-      categoryName: "Menu Card Scanned Specials",
-      name: "Menu Card Scanned Specials",
-      items: [
-        {
-          id: `item-scanned-${Date.now()}-1`,
-          name: "Special Chettinad Chicken",
-          description: "Spicy Tamil style chicken curry with roasted spices",
-          price: 280,
-          isVeg: false,
-          isAvailable: true,
-          imageUrl: "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=500",
-        },
-        {
-          id: `item-scanned-${Date.now()}-2`,
-          name: "Parotta with Salna (2 Pcs)",
-          description: "Layered flaky flatbread served with rich spicy gravy",
-          price: 90,
-          isVeg: true,
-          isAvailable: true,
-          imageUrl: "https://images.unsplash.com/photo-1589301760014-d929f397299c?w=500",
-        },
-        {
-          id: `item-scanned-${Date.now()}-3`,
-          name: "Mutton Sukka Fry",
-          description: "Tender mutton pan-fried with shallots and black pepper",
-          price: 340,
-          isVeg: false,
-          isAvailable: true,
-          imageUrl: "https://images.unsplash.com/photo-1544025162-d76694265947?w=500",
-        },
-        {
-          id: `item-scanned-${Date.now()}-4`,
-          name: "Ghee Roast Dosa",
-          description: "Crispy golden dosa roasted in pure desi ghee served with chutneys",
-          price: 110,
-          isVeg: true,
-          isAvailable: true,
-          imageUrl: "https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=500",
-        },
-        {
-          id: `item-scanned-${Date.now()}-5`,
-          name: "Kumbakonam Degree Coffee",
-          description: "Traditional aromatic strong filter coffee",
-          price: 40,
-          isVeg: true,
-          isAvailable: true,
-          imageUrl: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=500",
-        },
-      ],
-    };
+    const categories = Object.keys(categoriesMap).map((catName, idx) => ({
+      id: `cat-parsed-${Date.now()}-${idx}`,
+      categoryName: catName,
+      name: catName,
+      items: categoriesMap[catName].map((it, itemIdx) => ({
+        id: `item-parsed-${Date.now()}-${idx}-${itemIdx}`,
+        name: it.name,
+        description: `Extracted from uploaded Menu document (${it.categoryName})`,
+        price: it.price,
+        isVeg: it.isVeg,
+        isAvailable: true,
+        imageUrl: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500",
+      })),
+    })).filter(c => c.items.length > 0);
 
-    if (menusData[0]) {
-      menusData[0].categories.unshift({
-        id: fallbackCategory.id,
-        name: fallbackCategory.name,
-        items: fallbackCategory.items,
+    if (categories.length > 0) {
+      console.log(`[Vendor Router] Regex Text Parser extracted ${categories.length} categories from PDF/OCR text!`);
+      return res.json({
+        success: true,
+        categories,
+        source: "text-parser",
       });
     }
-
-    return res.json({
-      success: true,
-      categories: [fallbackCategory],
-    });
   }
-);
+
+  // Fallback: If completely unparseable, return empty array so frontend doesn't show wrong items
+  return res.json({
+    success: false,
+    categories: [],
+    message: "Could not detect menu items in file. Please ensure text or numbers are clear.",
+  });
+});
 
 // Inventory Stock Adjustment Endpoints
 restRouter.patch("/inventory/:id", (req, res) => {
