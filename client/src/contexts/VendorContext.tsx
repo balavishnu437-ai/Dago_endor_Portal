@@ -77,11 +77,34 @@ export function VendorProvider({ children }: { children: ReactNode }) {
     if (token && savedUser) {
       try {
         setUser(JSON.parse(savedUser));
-        if (savedRest) setRestaurant(JSON.parse(savedRest));
+        if (savedRest) {
+          const parsed = JSON.parse(savedRest);
+          if (parsed.id === 'rest-1') parsed.id = 'rest-bala-1';
+          setRestaurant(parsed);
+        }
         if (savedStore) setStore(JSON.parse(savedStore));
       } catch (e) {
         clearAuthToken();
       }
+    } else {
+      // Default to Bala Hotel for instant demo access
+      const defaultRest: RestaurantData = {
+        id: 'rest-bala-1',
+        name: 'Bala hotel',
+        description: 'Authentic Hyperlocal South Indian & Gourmet Kitchen',
+        phoneNumber: '9150416366',
+        rating: 4.8,
+        isOpening: true,
+        isActive: true,
+        latitude: 10.85,
+        longitude: 78.7,
+        avgDeliveryTime: 25,
+        minOrder: 100,
+        deliveryCharge: 30,
+        deliveryRadius: 5.0,
+      };
+      setRestaurant(defaultRest);
+      localStorage.setItem('dago_vendor_restaurant', JSON.stringify(defaultRest));
     }
     setIsLoading(false);
   }, []);

@@ -43,11 +43,11 @@ export default function Dashboard() {
     }
   };
 
-  const restaurantId = restaurant?.id;
+  const restaurantId = (restaurant?.id === 'rest-1' ? 'rest-bala-1' : restaurant?.id) || 'rest-bala-1';
   const storeId = store?.id;
 
-  const fetchDashboardData = async () => {
-    setLoading(true);
+  const fetchDashboardData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       if (restaurantId) {
         const restData = await restaurantApi.getById(restaurantId);
@@ -60,14 +60,18 @@ export default function Dashboard() {
       const ordersData = await ordersApi.getAll(restaurantId, storeId);
       setOrders(Array.isArray(ordersData) ? ordersData : []);
     } catch (err: any) {
-      toast.error('Failed to load dashboard metrics');
+      if (!silent) toast.error('Failed to load dashboard metrics');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchDashboardData();
+    const interval = setInterval(() => {
+      fetchDashboardData(true);
+    }, 5000); // 5-second live polling for incoming WhatsApp orders
+    return () => clearInterval(interval);
   }, [restaurantId, storeId]);
 
   const handleToggleStoreOpen = async (newVal: boolean) => {

@@ -421,6 +421,44 @@ restRouter.get("/orders", async (req, res) => {
   res.json(allOrders);
 });
 
+function decrementStock(itemId: string, itemName: string, quantity: number) {
+  const normName = (itemName || '').toLowerCase().trim();
+  const normId = (itemId || '').toLowerCase().trim();
+
+  // Try to find the item in menusData categories
+  for (const menu of menusData) {
+    for (const category of menu.categories) {
+      const item = category.items.find(i => 
+        (i.id && i.id.toLowerCase().trim() === normId) || 
+        (i.name && i.name.toLowerCase().trim() === normName)
+      );
+      if (item) {
+        const currentQty = item.stockQuantity !== undefined ? item.stockQuantity : (item.isAvailable !== false ? 50 : 0);
+        item.stockQuantity = Math.max(0, currentQty - quantity);
+        if (item.stockQuantity === 0) {
+          item.isAvailable = false;
+        }
+        console.log(`[Vendor Router] Reduced menu item "${item.name}" stock by ${quantity} to ${item.stockQuantity}`);
+        return;
+      }
+    }
+  }
+
+  // Try to find in storeProductsData
+  const product = storeProductsData.find(p => 
+    (p.id && p.id.toLowerCase().trim() === normId) || 
+    (p.name && p.name.toLowerCase().trim() === normName)
+  );
+  if (product) {
+    const currentQty = product.stockCount !== undefined ? product.stockCount : 50;
+    product.stockCount = Math.max(0, currentQty - quantity);
+    if (product.stockCount === 0) {
+      product.isAvailable = false;
+    }
+    console.log(`[Vendor Router] Reduced store product "${product.name}" stock by ${quantity} to ${product.stockCount}`);
+  }
+}
+
 restRouter.post("/orders", async (req, res) => {
   const formatted = formatBackendOrder(req.body);
   const newOrder = {
@@ -434,6 +472,13 @@ restRouter.post("/orders", async (req, res) => {
     ordersData[existingIdx] = { ...ordersData[existingIdx], ...newOrder };
   } else {
     ordersData.unshift(newOrder);
+  }
+
+  // Reduce stock for each item in the order
+  if (Array.isArray(newOrder.items)) {
+    for (const item of newOrder.items) {
+      decrementStock(item.id, item.name, item.quantity);
+    }
   }
 
   // Sync to NestJS Backend if new local order
@@ -1230,6 +1275,30 @@ Return a RAW JSON array of categories ONLY matching this exact schema:
 restRouter.patch("/inventory/:id", (req, res) => {
   const itemId = req.params.id;
   const stockCount = req.body?.stockCount ?? 50;
+
+  // Try to find in menusData
+  let found = false;
+  for (const menu of menusData) {
+    for (const category of menu.categories) {
+      const item = category.items.find(i => i.id === itemId);
+      if (item) {
+        item.stockQuantity = stockCount;
+        item.isAvailable = stockCount > 0;
+        found = true;
+        break;
+      }
+    }
+  }
+
+  // Try to find in storeProductsData
+  if (!found) {
+    const product = storeProductsData.find(p => p.id === itemId);
+    if (product) {
+      product.stockCount = stockCount;
+      product.isAvailable = stockCount > 0;
+    }
+  }
+
   console.log(`[Vendor Router] Updated stock quantity for item ID ${itemId} to ${stockCount}`);
   res.json({
     success: true,

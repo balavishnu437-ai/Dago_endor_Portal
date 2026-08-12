@@ -14,15 +14,15 @@ export default function Inventory() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  const restaurantId = restaurant?.id;
-  const storeId = store?.id;
+  const restaurantId = (restaurant?.id === 'rest-1' ? 'rest-bala-1' : restaurant?.id) || 'rest-bala-1';
+  const storeId = (store?.id === 'store-1' ? 'store-freshmart-01' : store?.id) || 'store-freshmart-01';
   const isRestaurant = !!restaurantId || !storeId;
 
   const fetchInventory = async () => {
     setLoading(true);
     try {
-      const activeRestId = restaurantId || 'rest-1';
-      const activeStoreId = storeId || 'store-1';
+      const activeRestId = restaurantId || 'rest-bala-1';
+      const activeStoreId = storeId || 'store-freshmart-01';
       let itemsList: any[] = [];
 
       if (isRestaurant || activeRestId) {

@@ -52,7 +52,7 @@ export default function Products() {
   const [isAvailable, setIsAvailable] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  const restaurantId = restaurant?.id;
+  const restaurantId = (restaurant?.id === 'rest-1' ? 'rest-bala-1' : restaurant?.id) || 'rest-bala-1';
   const storeId = store?.id;
   const isRestaurant = !!restaurantId || !storeId;
 
